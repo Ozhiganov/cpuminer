@@ -1,11 +1,39 @@
 #ifndef __MINER_H__
 #define __MINER_H__
 
-#include "cpuminer-config.h"
+#include <cpuminer-config.h>
+
+#define USER_AGENT PACKAGE_NAME "/" PACKAGE_VERSION
+#define MAX_CPUS 16
+
+#ifdef _MSC_VER
+
+#undef USE_ASM  /* to fix */
+
+#ifdef NOASM
+#undef USE_ASM
+#endif
+
+/* missing arch defines for msvc */
+#if defined(_M_X64) || defined(_M_AMD64)
+#define __i386__ 1
+#define __x86_64__ 1
+#elif defined(_M_X86) || defined(_M_IX86)
+#define __i386__ 1
+#endif
+
+#else
+
+#if !defined(__i386__) && defined(__i386)
+#define __i386__ 1 /* all intel */
+#endif
+
+#endif /* _MSC_VER */
 
 #include <stdbool.h>
 #include <inttypes.h>
 #include <sys/time.h>
+
 #include <pthread.h>
 #include <jansson.h>
 #include <curl/curl.h>
@@ -18,6 +46,7 @@
 #  include <stdlib.h>
 # endif
 #endif
+
 #ifdef HAVE_ALLOCA_H
 # include <alloca.h>
 #elif !defined alloca
@@ -38,6 +67,7 @@ void *alloca (size_t);
 
 #ifdef HAVE_SYSLOG_H
 #include <syslog.h>
+#define LOG_BLUE 0x10 /* unique value */
 #else
 enum {
 	LOG_ERR,
@@ -45,18 +75,12 @@ enum {
 	LOG_NOTICE,
 	LOG_INFO,
 	LOG_DEBUG,
+	/* custom notices */
+	LOG_BLUE = 0x10,
 };
 #endif
 
-#undef unlikely
-#undef likely
-#if defined(__GNUC__) && (__GNUC__ > 2) && defined(__OPTIMIZE__)
-#define unlikely(expr) (__builtin_expect(!!(expr), 0))
-#define likely(expr) (__builtin_expect(!!(expr), 1))
-#else
-#define unlikely(expr) (expr)
-#define likely(expr) (expr)
-#endif
+#include "compat.h"
 
 #ifndef ARRAY_SIZE
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
@@ -81,6 +105,8 @@ static inline uint32_t swab32(uint32_t v)
 #ifdef HAVE_SYS_ENDIAN_H
 #include <sys/endian.h>
 #endif
+
+typedef unsigned char uchar;
 
 #if !HAVE_DECL_BE32DEC
 static inline uint32_t be32dec(const void *pp)
@@ -122,13 +148,30 @@ static inline void le32enc(void *pp, uint32_t x)
 }
 #endif
 
-#if JANSSON_MAJOR_VERSION >= 2
-#define JSON_LOADS(str, err_ptr) json_loads((str), 0, (err_ptr))
-#else
-#define JSON_LOADS(str, err_ptr) json_loads((str), (err_ptr))
+#if !HAVE_DECL_LE16DEC
+static inline uint16_t le16dec(const void *pp)
+{
+	const uint8_t *p = (uint8_t const *)pp;
+	return ((uint16_t)(p[0]) + ((uint16_t)(p[1]) << 8));
+}
 #endif
 
-#define USER_AGENT PACKAGE_NAME "/" PACKAGE_VERSION
+#if !HAVE_DECL_LE16ENC
+static inline void le16enc(void *pp, uint16_t x)
+{
+	uint8_t *p = (uint8_t *)pp;
+	p[0] = x & 0xff;
+	p[1] = (x >> 8) & 0xff;
+}
+#endif
+
+#if JANSSON_MAJOR_VERSION >= 2
+#define JSON_LOADS(str, err_ptr) json_loads(str, 0, err_ptr)
+#define JSON_LOAD_FILE(path, err_ptr) json_load_file(path, 0, err_ptr)
+#else
+#define JSON_LOADS(str, err_ptr) json_loads(str, err_ptr)
+#define JSON_LOAD_FILE(path, err_ptr) json_load_file(path, err_ptr)
+#endif
 
 void sha256_init(uint32_t *state);
 void sha256_transform(uint32_t *state, const uint32_t *block, int swap);
@@ -149,108 +192,247 @@ void sha256_transform_8way(uint32_t *state, const uint32_t *block, int swap);
 #endif
 #endif
 
-extern int scanhash_sha256d(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+struct work;
+
+int scanhash_anime(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
                             uint32_t max_nonce, uint64_t *hashes_done);
 
-extern unsigned char *scrypt_buffer_alloc(int N);
-extern int scanhash_scrypt(int thr_id, uint32_t *pdata,
+int scanhash_axiom(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+    uint32_t max_nonce, uint64_t *hashes_done, uint32_t *nonces, int *nonces_len);
+
+int scanhash_blake(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_blakecoin(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_blake2s(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_bmw(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_c11(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_drop(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_sha256d(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+unsigned char *scrypt_buffer_alloc(int N);
+int scanhash_scrypt(int thr_id, uint32_t *pdata,
+                            unsigned char *scratchbuf, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done, uint32_t N);
+
+int scanhash_keccak(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_heavy(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_quark(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+void init_quarkhash_contexts();
+
+int scanhash_fresh(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_groestl(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_ink(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_luffa(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_lyra2(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_lyra2rev2(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_myriad(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_neoscrypt(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done, uint32_t profile);
+
+int scanhash_nist5(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_pentablake(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+                            uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_pluck(int thr_id, uint32_t *pdata,
                             unsigned char *scratchbuf, const uint32_t *ptarget,
                             uint32_t max_nonce, uint64_t *hashes_done, int N);
 
-extern int scanhash_keccak(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+int scanhash_qubit(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
                             uint32_t max_nonce, uint64_t *hashes_done);
 
-extern int scanhash_heavy(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+int scanhash_skein(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
                             uint32_t max_nonce, uint64_t *hashes_done);
 
-extern int scanhash_quark(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+int scanhash_skein2(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
                             uint32_t max_nonce, uint64_t *hashes_done);
 
-extern void init_quarkhash_contexts();
-
-extern int scanhash_skein(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+int scanhash_s3(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
                             uint32_t max_nonce, uint64_t *hashes_done);
 
-extern int scanhash_ink(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+int scanhash_x11(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
                             uint32_t max_nonce, uint64_t *hashes_done);
 
-extern void init_blakehash_contexts();
-
-extern int scanhash_blake(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+int scanhash_x13(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
                             uint32_t max_nonce, uint64_t *hashes_done);
 
-extern int scanhash_fresh(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+int scanhash_x14(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
                             uint32_t max_nonce, uint64_t *hashes_done);
 
-extern int scanhash_x11(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+int scanhash_x15(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
                             uint32_t max_nonce, uint64_t *hashes_done);
 
-extern int scanhash_x13(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+int scanhash_zr5(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *hashes_done);
+
+int scanhash_cryptolight(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
                             uint32_t max_nonce, uint64_t *hashes_done);
 
-extern int scanhash_x14(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
+int scanhash_cryptonight(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
                             uint32_t max_nonce, uint64_t *hashes_done);
 
-extern int scanhash_x15(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
-                            uint32_t max_nonce, uint64_t *hashes_done);
+/* api related */
+void *api_thread(void *userdata);
 
-extern void cryptonight_hash(void* output, const void* input, size_t input_len);
+struct cpu_info {
+	int thr_id;
+	int accepted;
+	int rejected;
+	double khashes;
+	bool has_monitoring;
+	float cpu_temp;
+	int cpu_fan;
+	uint32_t cpu_clock;
+};
 
-extern int scanhash_cryptonight(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
-                            uint32_t max_nonce, uint64_t *hashes_done);
+struct thr_api {
+	int id;
+	pthread_t pth;
+	struct thread_q	*q;
+};
+/* end of api */
 
 struct thr_info {
-	int		id;
-	pthread_t	pth;
+	int id;
+	pthread_t pth;
+	pthread_attr_t attr;
 	struct thread_q	*q;
+	struct cpu_info cpu;
 };
 
 struct work_restart {
-	volatile unsigned long	restart;
-	char			padding[128 - sizeof(unsigned long)];
+	volatile uint8_t restart;
+	char padding[128 - sizeof(uint8_t)];
 };
 
 extern bool opt_debug;
+extern bool opt_benchmark;
 extern bool opt_protocol;
+extern bool opt_quiet;
 extern bool opt_redirect;
 extern int opt_timeout;
 extern bool want_longpoll;
 extern bool have_longpoll;
+extern bool have_gbt;
+extern bool allow_getwork;
 extern bool want_stratum;
 extern bool have_stratum;
 extern char *opt_cert;
 extern char *opt_proxy;
 extern long opt_proxy_type;
 extern bool use_syslog;
+extern bool use_colors;
 extern pthread_mutex_t applog_lock;
 extern struct thr_info *thr_info;
 extern int longpoll_thr_id;
 extern int stratum_thr_id;
+extern int api_thr_id;
+extern int opt_n_threads;
 extern struct work_restart *work_restart;
-extern bool jsonrpc_2;
-extern bool aes_ni_supported;
+extern uint32_t opt_work_size;
+extern double *thr_hashrates;
+extern uint64_t global_hashrate;
+extern double stratum_diff;
+extern double net_diff;
+extern double net_hashrate;
 
 #define JSON_RPC_LONGPOLL	(1 << 0)
 #define JSON_RPC_QUIET_404	(1 << 1)
 #define JSON_RPC_IGNOREERR  (1 << 2)
 
-extern void applog(int prio, const char *fmt, ...);
+#define JSON_BUF_LEN 512
+
+#define CL_N    "\x1B[0m"
+#define CL_RED  "\x1B[31m"
+#define CL_GRN  "\x1B[32m"
+#define CL_YLW  "\x1B[33m"
+#define CL_BLU  "\x1B[34m"
+#define CL_MAG  "\x1B[35m"
+#define CL_CYN  "\x1B[36m"
+
+#define CL_BLK  "\x1B[22;30m" /* black */
+#define CL_RD2  "\x1B[22;31m" /* red */
+#define CL_GR2  "\x1B[22;32m" /* green */
+#define CL_BRW  "\x1B[22;33m" /* brown */
+#define CL_BL2  "\x1B[22;34m" /* blue */
+#define CL_MA2  "\x1B[22;35m" /* magenta */
+#define CL_CY2  "\x1B[22;36m" /* cyan */
+#define CL_SIL  "\x1B[22;37m" /* gray */
+
+#ifdef WIN32
+#define CL_GRY  "\x1B[01;30m" /* dark gray */
+#else
+#define CL_GRY  "\x1B[90m"    /* dark gray selectable in putty */
+#endif
+#define CL_LRD  "\x1B[01;31m" /* light red */
+#define CL_LGR  "\x1B[01;32m" /* light green */
+#define CL_YL2  "\x1B[01;33m" /* yellow */
+#define CL_LBL  "\x1B[01;34m" /* light blue */
+#define CL_LMA  "\x1B[01;35m" /* light magenta */
+#define CL_LCY  "\x1B[01;36m" /* light cyan */
+
+#define CL_WHT  "\x1B[01;37m" /* white */
+
+void applog(int prio, const char *fmt, ...);
+void restart_threads(void);
 extern json_t *json_rpc_call(CURL *curl, const char *url, const char *userpass,
 	const char *rpc_req, int *curl_err, int flags);
-extern char *bin2hex(const unsigned char *p, size_t len);
-extern bool hex2bin(unsigned char *p, const char *hexstr, size_t len);
-extern int timeval_subtract(struct timeval *result, struct timeval *x,
-	struct timeval *y);
-extern bool fulltest(const uint32_t *hash, const uint32_t *target);
-extern void diff_to_target(uint32_t *target, double diff);
+void bin2hex(char *s, const unsigned char *p, size_t len);
+char *abin2hex(const unsigned char *p, size_t len);
+bool hex2bin(unsigned char *p, const char *hexstr, size_t len);
+bool jobj_binary(const json_t *obj, const char *key, void *buf, size_t buflen);
+int varint_encode(unsigned char *p, uint64_t n);
+size_t address_to_script(unsigned char *out, size_t outsz, const char *addr);
+int timeval_subtract(struct timeval *result, struct timeval *x, struct timeval *y);
+bool fulltest(const uint32_t *hash, const uint32_t *target);
+void diff_to_target(uint32_t *target, double diff);
+void get_currentalgo(char* buf, int sz);
+bool has_aes_ni(void);
+void bestcpu_feature(char *outbuf, int maxsz);
+float cpu_temp(int core);
 
 struct work {
-    uint32_t data[32];
-    uint32_t target[8];
+	uint32_t data[32];
+	uint32_t target[8];
 
-    char *job_id;
-    size_t xnonce2_len;
-    unsigned char *xnonce2;
+	int height;
+	char *txs;
+	char *workid;
+
+	char *job_id;
+	size_t xnonce2_len;
+	unsigned char *xnonce2;
 };
 
 struct stratum_job {
@@ -288,6 +470,8 @@ struct stratum_ctx {
 	struct stratum_job job;
 	struct work work;
 	pthread_mutex_t work_lock;
+
+	int bloc_height;
 };
 
 bool stratum_socket_full(struct stratum_ctx *sctx, int timeout);
@@ -299,16 +483,74 @@ bool stratum_subscribe(struct stratum_ctx *sctx);
 bool stratum_authorize(struct stratum_ctx *sctx, const char *user, const char *pass);
 bool stratum_handle_method(struct stratum_ctx *sctx, const char *s);
 
-extern bool rpc2_job_decode(const json_t *job, struct work *work);
-extern bool rpc2_login_decode(const json_t *val);
+/* rpc 2.0 (xmr) */
+extern bool jsonrpc_2;
+extern bool aes_ni_supported;
+extern char rpc2_id[64];
+extern char *rpc2_blob;
+extern size_t rpc2_bloblen;
+extern uint32_t rpc2_target;
+extern char *rpc2_job_id;
+
+json_t *json_rpc2_call(CURL *curl, const char *url, const char *userpass, const char *rpc_req, int *curl_err, int flags);
+bool rpc2_login(CURL *curl);
+bool rpc2_login_decode(const json_t *val);
+bool rpc2_workio_login(CURL *curl);
+bool rpc2_stratum_job(struct stratum_ctx *sctx, json_t *params);
+bool rpc2_job_decode(const json_t *job, struct work *work);
 
 struct thread_q;
 
-extern struct thread_q *tq_new(void);
-extern void tq_free(struct thread_q *tq);
-extern bool tq_push(struct thread_q *tq, void *data);
-extern void *tq_pop(struct thread_q *tq, const struct timespec *abstime);
-extern void tq_freeze(struct thread_q *tq);
-extern void tq_thaw(struct thread_q *tq);
+struct thread_q *tq_new(void);
+void tq_free(struct thread_q *tq);
+bool tq_push(struct thread_q *tq, void *data);
+void *tq_pop(struct thread_q *tq, const struct timespec *abstime);
+void tq_freeze(struct thread_q *tq);
+void tq_thaw(struct thread_q *tq);
+
+void parse_arg(int key, char *arg);
+void parse_config(json_t *config, char *ref);
+void proper_exit(int reason);
+
+void applog_hash(void *hash);
+void format_hashrate(double hashrate, char *output);
+void print_hash_tests(void);
+
+void sha256d(unsigned char *hash, const unsigned char *data, int len);
+void animehash(void *state, const void *input);
+void axiomhash(void *state, const void *input);
+void blakehash(void *state, const void *input);
+void blakecoinhash(void *state, const void *input);
+void blake2s_hash(void *output, const void *input);
+void bmwhash(void *output, const void *input);
+void c11hash(void *output, const void *input);
+void cryptolight_hash(void* output, const void* input, int len);
+void cryptonight_hash(void* output, const void* input, int len);
+void droplp_hash(void *output, const void *input);
+void groestlhash(void *output, const void *input);
+void heavyhash(unsigned char* output, const unsigned char* input, int len);
+void quarkhash(void *state, const void *input);
+void freshhash(void* output, const void* input, uint32_t len);
+void keccakhash(void *state, const void *input);
+void inkhash(void *state, const void *input); /* shavite */
+void luffahash(void *output, const void *input);
+void lyra2_hash(void *state, const void *input);
+void lyra2rev2_hash(void *state, const void *input);
+void myriadhash(void *output, const void *input);
+void neoscrypt(unsigned char *output, const unsigned char *password, uint32_t profile);
+void nist5hash(void *output, const void *input);
+void pluck_hash(uint32_t *hash, const uint32_t *data, uchar *hashbuffer, const int N);
+void pentablakehash(void *output, const void *input);
+void qubithash(void *output, const void *input);
+void skeinhash(void *state, const void *input);
+void skein2hash(void *state, const void *input);
+void s3hash(void *output, const void *input);
+void x11hash(void *output, const void *input);
+void x13hash(void *output, const void *input);
+void x14hash(void *output, const void *input);
+void x15hash(void *output, const void *input);
+void zr5hash(void *output, const void *input);
+void zr5hash_pok(void *output, uint32_t *pdata);
+
 
 #endif /* __MINER_H__ */
